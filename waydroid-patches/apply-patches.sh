@@ -137,7 +137,7 @@ apply_patch() {
   fi
 }
 
-sdkv=$(cat build/make/core/version_defaults.mk | grep "PLATFORM_SDK_VERSION :=" | grep -o "[[:digit:]]\+")
+sdkv=34
 patch_dir="${patch_dir}-${sdkv}"
 roms_patch_dir="${roms_patch_dir}-${sdkv}"
 
