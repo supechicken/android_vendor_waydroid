@@ -45,14 +45,7 @@ if [ ! -d "${top_dir}/.repo" ]; then
     exit
 fi
 
-if [ ! -f build/make/core/version_defaults.mk ]; then
-    echo -e ${reset}""${reset}
-    echo -e ${ltred}"ERROR: Missing build/make. Please run `repo sync build/make` first."${reset}
-    echo -e ${reset}""${reset}
-    exit
-fi
-
-sdkv=$(cat build/make/core/version_defaults.mk | grep "PLATFORM_SDK_VERSION :=" | grep -o "[[:digit:]]\+")
+sdkv=34
 manifests_url="${manifests_url}-${sdkv}"
 manifests_path="${manifests_path}-${sdkv}"
 
