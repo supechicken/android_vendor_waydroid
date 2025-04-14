@@ -1,0 +1,267 @@
+From 7fcb2051b7021ecb98886a0a60bcf13da48ab98b Mon Sep 17 00:00:00 2001
+From: Alessandro Astone <ales.astone@gmail.com>
+Date: Sun, 26 Jan 2025 00:22:45 +0100
+Subject: [PATCH] Re-implement PolicyControl for hiding StatusBar and NavBar
+
+Change-Id: I032efb3bd7adc65ceebd5f2fa11143e674d56ab4
+---
+ core/java/android/view/InsetsSource.java      |  2 ++
+ core/java/android/view/InsetsState.java       | 16 ++++++++-
+ .../internal/policy/SystemBarUtils.java       | 13 ++++++++
+ .../systemui/navigationbar/NavigationBar.java | 33 +++++++++++++++++++
+ .../window/StatusBarWindowController.java     | 22 +++++++++++++
+ .../server/wm/WindowManagerService.java       |  2 ++
+ 6 files changed, 87 insertions(+), 1 deletion(-)
+
+diff --git a/core/java/android/view/InsetsSource.java b/core/java/android/view/InsetsSource.java
+index c8c941a220f0..277cb9bab961 100644
+--- a/core/java/android/view/InsetsSource.java
++++ b/core/java/android/view/InsetsSource.java
+@@ -90,6 +90,8 @@ public class InsetsSource implements Parcelable {
+     }
+ 
+     public void setVisible(boolean visible) {
++        if (InsetsState.shouldForceHide(mType))
++            visible = false;
+         mVisible = visible;
+     }
+ 
+diff --git a/core/java/android/view/InsetsState.java b/core/java/android/view/InsetsState.java
+index c198098cb6ff..57a55fcb31b4 100644
+--- a/core/java/android/view/InsetsState.java
++++ b/core/java/android/view/InsetsState.java
+@@ -37,6 +37,7 @@ import android.annotation.IntDef;
+ import android.annotation.NonNull;
+ import android.annotation.Nullable;
+ import android.app.WindowConfiguration;
++import android.content.Context;
+ import android.graphics.Insets;
+ import android.graphics.Rect;
+ import android.os.Parcel;
+@@ -49,6 +50,7 @@ import android.view.WindowInsets.Type.InsetsType;
+ import android.view.WindowManager.LayoutParams.SoftInputModeFlags;
+ 
+ import com.android.internal.annotations.VisibleForTesting;
++import com.android.internal.policy.SystemBarUtils;
+ 
+ import java.io.PrintWriter;
+ import java.lang.annotation.Retention;
+@@ -63,6 +65,8 @@ import java.util.StringJoiner;
+  */
+ public class InsetsState implements Parcelable {
+ 
++    public static Context sWmContext;
++
+     /**
+      * Internal representation of inset source types. This is different from the public API in
+      * {@link WindowInsets.Type} as one type from the public API might indicate multiple windows
+@@ -227,7 +231,7 @@ public class InsetsState implements Parcelable {
+         final Rect relativeFrameMax = new Rect(frame);
+         for (int type = FIRST_TYPE; type <= LAST_TYPE; type++) {
+             InsetsSource source = mSources[type];
+-            if (source == null) {
++            if (source == null || shouldForceHide(type)) {
+                 int index = indexOf(toPublicType(type));
+                 if (typeInsetsMap[index] == null) {
+                     typeInsetsMap[index] = Insets.NONE;
+@@ -515,6 +519,12 @@ public class InsetsState implements Parcelable {
+         return mSources[type];
+     }
+ 
++    public static boolean shouldForceHide(@InternalInsetsType int type) {
++        return (type == ITYPE_CLIMATE_BAR ||
++                type == ITYPE_STATUS_BAR) &&
++            (sWmContext != null ? SystemBarUtils.isImmersive(sWmContext) : false);
++    }
++
+     /**
+      * Returns the source visibility or the default visibility if the source doesn't exist. This is
+      * useful if when treating this object as a request.
+@@ -524,6 +534,8 @@ public class InsetsState implements Parcelable {
+      *         doesn't exist.
+      */
+     public boolean getSourceOrDefaultVisibility(@InternalInsetsType int type) {
++        if (shouldForceHide(type))
++            return false;
+         final InsetsSource source = mSources[type];
+         return source != null ? source.isVisible() : getDefaultVisibility(type);
+     }
+@@ -784,6 +796,8 @@ public class InsetsState implements Parcelable {
+     }
+ 
+     public static boolean getDefaultVisibility(@InternalInsetsType int type) {
++        if (shouldForceHide(type))
++            return false;
+         return type != ITYPE_IME;
+     }
+ 
+diff --git a/core/java/com/android/internal/policy/SystemBarUtils.java b/core/java/com/android/internal/policy/SystemBarUtils.java
+index 7a1ac071a625..55fca0698347 100644
+--- a/core/java/com/android/internal/policy/SystemBarUtils.java
++++ b/core/java/com/android/internal/policy/SystemBarUtils.java
+@@ -23,6 +23,8 @@ import android.util.RotationUtils;
+ import android.view.DisplayCutout;
+ import android.view.Surface;
+ 
++import android.provider.Settings;
++
+ import com.android.internal.R;
+ 
+ /**
+@@ -32,10 +34,19 @@ import com.android.internal.R;
+  */
+ public final class SystemBarUtils {
+ 
++    public static boolean isImmersive(Context context) {
++        String policy = Settings.Global.getString(context.getContentResolver(), Settings.Global.POLICY_CONTROL);
++        return
++            "immersive.full=*".equals(policy) ||
++            "immersive.status=*".equals(policy);
++    }
++
+     /**
+      * Gets the status bar height.
+      */
+     public static int getStatusBarHeight(Context context) {
++        if (isImmersive(context))
++            return 0;
+         return getStatusBarHeight(context.getResources(), context.getDisplay().getCutout());
+     }
+ 
+@@ -56,6 +67,8 @@ public final class SystemBarUtils {
+      */
+     public static int getStatusBarHeightForRotation(
+             Context context, @Surface.Rotation int targetRot) {
++        if (isImmersive(context))
++            return 0;
+         final int rotation = context.getDisplay().getRotation();
+         final DisplayCutout cutout = context.getDisplay().getCutout();
+ 
+diff --git a/packages/SystemUI/src/com/android/systemui/navigationbar/NavigationBar.java b/packages/SystemUI/src/com/android/systemui/navigationbar/NavigationBar.java
+index dd39bc43c3c4..fbc3c256caf8 100644
+--- a/packages/SystemUI/src/com/android/systemui/navigationbar/NavigationBar.java
++++ b/packages/SystemUI/src/com/android/systemui/navigationbar/NavigationBar.java
+@@ -99,6 +99,10 @@ import android.view.accessibility.AccessibilityEvent;
+ import android.view.accessibility.AccessibilityManager;
+ import android.view.inputmethod.InputMethodManager;
+ 
++import android.database.ContentObserver;
++import android.os.Handler;
++import android.provider.Settings;
++
+ import androidx.annotation.Nullable;
+ import androidx.annotation.VisibleForTesting;
+ 
+@@ -281,6 +285,8 @@ public class NavigationBar extends ViewController<NavigationBarView> implements
+     private boolean mImeVisible;
+     private final Rect mSamplingBounds = new Rect();
+ 
++    private boolean mImmersive;
++
+     /**
+      * When quickswitching between apps of different orientations, we draw a secondary home handle
+      * in the position of the first app's orientation. This rect represents the region of that
+@@ -658,6 +664,28 @@ public class NavigationBar extends ViewController<NavigationBarView> implements
+         mView.setEdgeBackGestureHandler(mEdgeBackGestureHandler);
+         mView.setDisplayTracker(mDisplayTracker);
+         mNavBarMode = mNavigationModeController.addListener(mModeChangedListener);
++
++        mImmersive = isImmersive(context);
++        context.getContentResolver().registerContentObserver(
++            Settings.Global.getUriFor(Settings.Global.POLICY_CONTROL),
++            false,
++            new ContentObserver(new Handler(context.getMainLooper())) {
++                @Override
++                public void onChange(boolean selfChange) {
++                    boolean immersive = isImmersive(context);
++                    if (mImmersive != immersive) {
++                        mImmersive = immersive;
++                        repositionNavigationBar(mCurrentRotation);
++                    }
++                }
++            }
++        );
++
++    }
++
++    private static boolean isImmersive(Context context) {
++        String policy = Settings.Global.getString(context.getContentResolver(), Settings.Global.POLICY_CONTROL);
++        return "immersive.full=*".equals(policy);
+     }
+ 
+     public NavigationBarView getView() {
+@@ -1670,6 +1698,11 @@ public class NavigationBar extends ViewController<NavigationBarView> implements
+                     break;
+             }
+         }
++        if (mImmersive) {
++            height = 0;
++            width = 0;
++            insetsHeight = 0;
++        }
+         WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                 width,
+                 height,
+diff --git a/packages/SystemUI/src/com/android/systemui/statusbar/window/StatusBarWindowController.java b/packages/SystemUI/src/com/android/systemui/statusbar/window/StatusBarWindowController.java
+index 7a4e35f159ab..fb82caad7f0d 100644
+--- a/packages/SystemUI/src/com/android/systemui/statusbar/window/StatusBarWindowController.java
++++ b/packages/SystemUI/src/com/android/systemui/statusbar/window/StatusBarWindowController.java
+@@ -41,6 +41,10 @@ import android.view.View;
+ import android.view.ViewGroup;
+ import android.view.WindowManager;
+ 
++import android.database.ContentObserver;
++import android.os.Handler;
++import android.provider.Settings;
++
+ import com.android.internal.policy.SystemBarUtils;
+ import com.android.systemui.R;
+ import com.android.systemui.animation.ActivityLaunchAnimator;
+@@ -81,6 +85,8 @@ public class StatusBarWindowController {
+     private WindowManager.LayoutParams mLp;
+     private final WindowManager.LayoutParams mLpChanged;
+ 
++    private boolean mImmersive;
++
+     @Inject
+     public StatusBarWindowController(
+             Context context,
+@@ -108,6 +114,22 @@ public class StatusBarWindowController {
+                 unfoldProgressProvider -> unfoldProgressProvider.addCallback(
+                         new JankMonitorTransitionProgressListener(
+                                 /* attachedViewProvider=*/ () -> mStatusBarWindowView)));
++
++        mImmersive = SystemBarUtils.isImmersive(context);
++        context.getContentResolver().registerContentObserver(
++            Settings.Global.getUriFor(Settings.Global.POLICY_CONTROL),
++            false,
++            new ContentObserver(new Handler(context.getMainLooper())) {
++                @Override
++                public void onChange(boolean selfChange) {
++                    boolean immersive = SystemBarUtils.isImmersive(context);
++                    if (mImmersive != immersive) {
++                        mImmersive = immersive;
++                        refreshStatusBarHeight();
++                    }
++                }
++            }
++        );
+     }
+ 
+     public int getStatusBarHeight() {
+diff --git a/services/core/java/com/android/server/wm/WindowManagerService.java b/services/core/java/com/android/server/wm/WindowManagerService.java
+index be414b697368..9e61e6468f03 100644
+--- a/services/core/java/com/android/server/wm/WindowManagerService.java
++++ b/services/core/java/com/android/server/wm/WindowManagerService.java
+@@ -1394,6 +1394,8 @@ public class WindowManagerService extends IWindowManager.Stub
+         mBlurController = new BlurController(mContext, mPowerManager);
+         mTaskFpsCallbackController = new TaskFpsCallbackController(mContext);
+         mAccessibilityController = new AccessibilityController(this);
++
++        InsetsState.sWmContext = mContext;
+     }
+ 
+     DisplayAreaPolicy.Provider getDisplayAreaPolicyProvider() {
+-- 
+2.49.0
+

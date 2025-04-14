@@ -1,0 +1,41 @@
+From 60dbda0985d9a3a77943b41e0a8562db53fbb009 Mon Sep 17 00:00:00 2001
+From: Erfan Abdi <erfangplus@gmail.com>
+Date: Thu, 20 May 2021 22:35:53 +0430
+Subject: [PATCH 01/20] libcameraservice: Use listByInterface
+
+---
+ .../common/CameraProviderManager.cpp              | 15 ++++++++++++---
+ 1 file changed, 12 insertions(+), 3 deletions(-)
+
+diff --git a/services/camera/libcameraservice/common/CameraProviderManager.cpp b/services/camera/libcameraservice/common/CameraProviderManager.cpp
+index 43f92a9927..80d7f8ea78 100644
+--- a/services/camera/libcameraservice/common/CameraProviderManager.cpp
++++ b/services/camera/libcameraservice/common/CameraProviderManager.cpp
+@@ -95,12 +95,21 @@ const char* FrameworkDeviceStatusToString(const CameraDeviceStatus& s) {
+ hardware::hidl_vec<hardware::hidl_string>
+ CameraProviderManager::HidlServiceInteractionProxyImpl::listServices() {
+     hardware::hidl_vec<hardware::hidl_string> ret;
+-    auto manager = hardware::defaultServiceManager1_2();
+-    if (manager != nullptr) {
+-        manager->listManifestByInterface(provider::V2_4::ICameraProvider::descriptor,
++    auto manager = hardware::defaultServiceManager1_1();
++    auto manager_host = hardware::defaultServiceManager1_1(true);
++    if (manager_host != nullptr) {
++        manager_host->listByInterface(provider::V2_4::ICameraProvider::descriptor,
+                 [&ret](const hardware::hidl_vec<hardware::hidl_string> &registered) {
+                     ret = registered;
+                 });
++     }
++    if (ret.size() == 0) {
++        if (manager != nullptr) {
++            manager->listByInterface(provider::V2_4::ICameraProvider::descriptor,
++                    [&ret](const hardware::hidl_vec<hardware::hidl_string> &registered) {
++                        ret = registered;
++                    });
++        }
+     }
+     return ret;
+ }
+-- 
+2.48.1
+
